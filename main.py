@@ -29,10 +29,11 @@ def process_args():
 if __name__ == "__main__":
     args = process_args()
 
-    # Restart script as root
-    if not os.geteuid() == 0:
-        sudo_args = ['sudo', sys.executable] + sys.argv + [os.environ]
-        os.execlpe('sudo', *sudo_args)
+    # Force restart script as root under systemd-inhibit
+    if "/usr/bin/systemd-inhibit" not in os.environ.get("SUDO_COMMAND", '').split():
+        systemd_inhibit_args = ["systemd-inhibit", "--who=Depthboot Builder", "--why=Keep system online during image build"]
+        new_args = ["sudo", *systemd_inhibit_args, sys.executable] + sys.argv + [os.environ]
+        os.execlpe('sudo', *new_args)  
 
     # check if cgpt and vboot are already installed
     if path_exists("/usr/bin/vbutil_kernel") and path_exists("/usr/bin/cgpt"):

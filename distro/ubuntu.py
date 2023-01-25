@@ -4,7 +4,7 @@ import os
 from functions import *
 
 
-def config(de_name: str, distro_version: str, username: str, root_partuuid: str, verbose: bool) -> None:
+def config(de_name: str, distro_version: str, verbose: bool) -> None:
     set_verbose(verbose)
     print_status("Configuring Ubuntu")
 
@@ -35,12 +35,12 @@ def config(de_name: str, distro_version: str, username: str, root_partuuid: str,
                    "apt-repo/debian_ubuntu kinetic main")
     # update apt
     chroot("apt-get update -y")
+    chroot("apt-get upgrade -y")
     # Install general dependencies + eupnea packages
-    chroot("apt-get install -y linux-firmware network-manager software-properties-common nano git eupnea-utils "
+    chroot("apt-get install -y linux-firmware network-manager software-properties-common nano eupnea-utils "
            "eupnea-system")
 
     print_status("Downloading and installing de, might take a while")
-    start_progress()  # start fake progress
     match de_name:
         case "gnome":
             print_status("Installing GNOME")
@@ -88,7 +88,6 @@ def config(de_name: str, distro_version: str, username: str, root_partuuid: str,
         case _:
             print_error("Invalid desktop environment! Please create an issue")
             exit(1)
-    stop_progress()  # stop fake progress
 
     # GDM3 auto installs gnome-minimal. Gotta remove it if user didn't choose gnome
     if de_name != "gnome":

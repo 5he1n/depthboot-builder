@@ -22,45 +22,44 @@ def get_user_input(skip_device: bool = False) -> dict:
     # Print welcome message
     print_header("Welcome to Depthboot, formerly known as Breath\n"
                  "This script will create a bootable Linux USB-drive/SD-card/image.\n"
-                 "The script will now ask a few questions.")
+                 "The script will now ask a few questions.\n"
+                 "You can Press Ctrl+C at any time to cancel the script.")
     input("Press Enter to continue...")
     while True:
         distro_name = ia_selection("Which Linux distribution (flavor) would you like to use?",
-                                   options=["Pop!_OS", "Ubuntu", "Fedora", "Debian", "Arch"],
+                                   options=["Pop!_OS", "Ubuntu", "Fedora", "Arch", "Debian"],
                                    flags=["(recommended)"])
         match distro_name:
             case "Ubuntu":
                 output_dict["distro_name"] = "ubuntu"
-                distro_version = ia_selection("Which Ubuntu version would you like to use?",
-                                              options=["22.04", "22.10"],
-                                              flags=["(LTS)", "(latest)"])
-                output_dict["distro_version"] = distro_version
+                output_dict["distro_version"] = ia_selection("Which Ubuntu version would you like to use?",
+                                                             options=["22.04", "22.10"], flags=["(LTS)", "(latest)"])
                 break
             case "Debian":
                 output_dict["distro_name"] = "debian"
-                distro_version = ia_selection("Which debian branch would you like to use?",
-                                              options=["testing", "stable"],
-                                              flags=["(recommended)", "(not recommended)"])
-                if distro_version == "stable":
-                    user_selection = ia_selection(
-                        "Warning: audio and some postinstall scripts are not supported on debian stable by default.",
-                        options=["Use testing instead", "Choose another distro", "Continue anyways"])
-                    match user_selection:
-                        case "Continue anyways":
-                            output_dict["distro_version"] = "stable"
-                            break
-                        case "Use testing instead":
-                            output_dict["distro_version"] = "testing"
-                            break
-                        case "Choose another distro":
-                            continue  # return to distro selection
+                output_dict["distro_version"] = ia_selection("Which debian branch would you like to use?",
+                                                             options=["testing", "stable"],
+                                                             flags=["(recommended)", "(not recommended)"])
+                if output_dict["distro_version"] != "stable":
+                    break
+                user_selection = ia_selection(
+                    "Warning: audio and some postinstall scripts are not supported on debian stable by default.",
+                    options=["Use testing instead", "Choose another distro", "Continue with stable"])
+                match user_selection:
+                    case "Continue with stable":
+                        break
+                    case "Use testing instead":
+                        output_dict["distro_version"] = "testing"
+                        break
+                    case "Choose another distro":
+                        continue  # return to distro selection
             case "Arch":
                 output_dict["distro_name"] = "arch"
                 output_dict["distro_version"] = "latest"
                 break
             case "Fedora":
                 output_dict["distro_name"] = "fedora"
-                output_dict["distro_version"] = ia_selection("Which Ubuntu version would you like to use?",
+                output_dict["distro_version"] = ia_selection("Which Fedora version would you like to use?",
                                                              options=["37", "38"],
                                                              flags=["(stable, recommended)", "(beta, unrecommended)"])
                 break
@@ -73,12 +72,13 @@ def get_user_input(skip_device: bool = False) -> dict:
     if output_dict["distro_name"] != "pop-os":
         de_list = ["Gnome", "KDE", "Xfce", "LXQt", "cli"]
         flags_list = ["(recommended)", "(recommended)", "(recommended for weak devices)",
-                      "(recommended for weak devices)"]
+                      "(recommended for weak devices)", "(no desktop environment)"]
 
         match output_dict["distro_name"]:
             case "ubuntu":
                 if output_dict["distro_version"] == "22.04":
                     de_list.append("deepin")
+                de_list.append("budgie")
             case "debian":
                 de_list.append("budgie")
             case "arch":
@@ -92,10 +92,9 @@ def get_user_input(skip_device: bool = False) -> dict:
                                        flags=flags_list)
             if desktop_env == "cli":
                 print_warning("Warning: No desktop environment will be installed!")
-                user_selection = ia_selection("Are you sure you want to continue?", options=["Yes", "No"], )
+                user_selection = ia_selection("Are you sure you want to continue?", options=["No", "Yes"], )
                 if user_selection == "Yes":
                     print_status("No desktop will be installed.")
-                    break
 
             output_dict["de_name"] = desktop_env.lower()
             break
@@ -156,10 +155,10 @@ def get_user_input(skip_device: bool = False) -> dict:
         usb_info_array = []
         lsblk_out = bash("lsblk -nd -o NAME,MODEL,SIZE,TRAN").splitlines()
         for line in lsblk_out:
-            if not line.find("usb") == -1 and line.find("0B") == -1:  # Print USB devices only with storage more than 0B
+            if line.find("usb") != -1 and line.find("0B") == -1:  # Print USB devices only with storage more than 0B
                 usb_array.append(line[:3])
                 usb_info_array.append(line[3:])
-        if len(usb_array) == 0:
+        if not usb_array:
             print_status("No available USBs/SD-cards found. Building image file.")
         else:
             device = ia_selection("Select USB-drive/SD-card name or 'image' to build an image",

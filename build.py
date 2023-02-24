@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
-import contextlib
 import atexit
+import contextlib
 import json
 import sys
 from typing import Tuple
@@ -12,6 +12,7 @@ from functions import *
 img_mnt = ""  # empty to avoid variable not defined error in exit_handler
 
 
+# the exit handler with user messages is in main.py
 def exit_handler():
     # Only trigger cleanup if the user initiated the exit, not if the script exited on its own
     exc_type = sys.exc_info()[0]
@@ -63,81 +64,38 @@ def prepare_host(de_name: str) -> None:
     rmfile("kernel.flags")
     rmfile(".stop_download_progress")
 
-    # install debootstrap for debian
-    if de_name == "debian" and not path_exists("/usr/sbin/debootstrap"):
-        print_status("Installing debootstrap")
-        if path_exists("/usr/bin/apt"):
-            bash("apt-get install debootstrap -y")
-        elif path_exists("/usr/bin/pacman"):
-            bash("pacman -S debootstrap --noconfirm")
-        elif path_exists("/usr/bin/dnf"):
-            bash("dnf install debootstrap --assumeyes")
-        elif path_exists("/usr/bin/zypper"):  # openSUSE
-            bash("zypper --non-interactive install debootstrap")
-        else:
-            print_warning("Debootstrap not found, please install it using your distros package manager or select "
-                          "another distro instead of debian")
-            exit(1)
 
-
-# download kernel files from GitHub
-def download_kernel(kernel_type: str, dev_release: bool, files: list = None) -> str:
+def download_kernel(kernel_type: str, dev_release: bool, files: list = None) -> None:
     if files is None:
-        files = ["bzImage", "modules", "headers"]
-    # select correct link
+        files = ["bzImage"]
+
     if dev_release:
-        url = "https://github.com/eupnea-linux/chromeos-kernel/releases/download/dev-build/"
+        urls = {
+            "mainline": "https://github.com/eupnea-linux/mainline-kernel/releases/download/dev-build/",
+            "chromeos": "https://github.com/eupnea-linux/chromeos-kernel/releases/download/dev-build/"
+        }
     else:
-        url = "https://github.com/eupnea-linux/chromeos-kernel/releases/latest/download/"
+        urls = {
+            "mainline": "https://github.com/eupnea-linux/mainline-kernel/releases/latest/download/",
+            "chromeos": "https://github.com/eupnea-linux/chromeos-kernel/releases/latest/download/"
+        }
 
-    # download kernel files
     try:
-        match kernel_type:
-            case "mainline":
-                print_status("Downloading mainline kernel")
-                url = "https://github.com/eupnea-linux/mainline-kernel/releases/latest/download/"
-                if "bzImage" in files:
-                    urlretrieve(f"{url}bzImage-stable", filename="/tmp/depthboot-build/bzImage")
-                if "modules" in files:
-                    urlretrieve(f"{url}modules-stable.tar.xz", filename="/tmp/depthboot-build/modules.tar.xz")
-                if "headers" in files:
-                    urlretrieve(f"{url}headers-stable.tar.xz", filename="/tmp/depthboot-build/headers.tar.xz")
-            case "exp":
-                print_status("Downloading experimental 5.15 kernel")
-                if "bzImage" in files:
-                    urlretrieve(f"{url}bzImage-exp", filename="/tmp/depthboot-build/bzImage")
-                if "modules" in files:
-                    urlretrieve(f"{url}modules-exp.tar.xz", filename="/tmp/depthboot-build/modules.tar.xz")
-                if "headers" in files:
-                    urlretrieve(f"{url}headers-exp.tar.xz", filename="/tmp/depthboot-build/headers.tar.xz")
-            case "stable":
-                print_status("Downloading stable 5.10 kernel")
-                if "bzImage" in files:
-                    urlretrieve(f"{url}bzImage-stable", filename="/tmp/depthboot-build/bzImage")
-                if "modules" in files:
-                    urlretrieve(f"{url}modules-stable.tar.xz", filename="/tmp/depthboot-build/modules.tar.xz")
-                if "headers" in files:
-                    urlretrieve(f"{url}headers-stable.tar.xz", filename="/tmp/depthboot-build/headers.tar.xz")
+        print_status(f"Downloading {kernel_type} kernel")
+        if "bzImage" in files:
+            download_file(f"{urls[kernel_type]}bzImage", "/tmp/depthboot-build/bzImage")
 
-        print_status("Getting kernel version")
-        if kernel_type == "mainline":
-            url = "https://api.github.com/repos/eupnea-linux/mainline-kernel/releases/latest"
-        else:
-            url = "https://api.github.com/repos/eupnea-linux/chromeos-kernel/releases/latest"
-        print_status("Kernel files downloaded successfully")
-        return json.loads(urlopen(url).read())["tag_name"]
     except URLError:
         print_error("Failed to reach github. Check your internet connection and try again or use local files with -l")
-        print_warning("Dev releases may not always be available")
-        exit(1)
+        if dev_release:
+            print_warning("Dev releases may not always be available")
+        sys.exit(1)
 
 
 # download the distro rootfs
 def download_rootfs(distro_name: str, distro_version: str) -> None:
     try:
         match distro_name:
-            case "debian":
-                print_status("Debian is downloaded later, skipping download")
             case "arch":
                 print_status("Downloading latest arch rootfs from geo.mirror.pkgbuild.com")
                 download_file("https://geo.mirror.pkgbuild.com/iso/latest/archlinux-bootstrap-x86_64.tar.gz",
@@ -150,19 +108,7 @@ def download_rootfs(distro_name: str, distro_version: str) -> None:
     except URLError:
         print_error("Couldn't download rootfs. Check your internet connection and try again. If the error persists, "
                     "create an issue with the distro and version in the name")
-        exit(1)
-
-
-# TODO: Figure out if this is actually necessary or if linux-firmware is enough
-# Download firmware for later
-def download_firmware() -> None:
-    print_status("Downloading chromeos firmware")
-    try:
-        bash("git clone --depth=1 https://chromium.googlesource.com/chromiumos/third_party/linux-firmware/ "
-             "/tmp/depthboot-build/firmware")
-    except URLError:
-        print_error("Couldn't download firmware. Check your internet connection and try again.")
-        exit(1)
+        sys.exit(1)
 
 
 # Create, mount, partition the img and flash the eupnea kernel
@@ -177,7 +123,7 @@ def prepare_img(distro_name: str, img_size) -> Tuple[str, str]:
     mnt_point = bash("losetup -f --show depthboot.img")
     if mnt_point == "":
         print_error("Failed to mount image")
-        exit(1)
+        sys.exit(1)
     return partition_and_flash_kernel(mnt_point, False, distro_name)
 
 
@@ -211,7 +157,15 @@ def partition_and_flash_kernel(mnt_point: str, write_usb: bool, distro_name: str
 
     # format as per depthcharge requirements,
     # READ: https://wiki.gentoo.org/wiki/Creating_bootable_media_for_depthcharge_based_devices
-    bash(f"parted -s {mnt_point} mklabel gpt")
+    try:
+        bash(f"parted -s {mnt_point} mklabel gpt")
+    # TODO: Only show this prompt when parted throws: "we have been unable to inform the kernel of the change"
+    # TODO: Check if partprob-ing the drive could fix this error
+    except subprocess.CalledProcessError:
+        print_error("Failed to create partition table. Try physically unplugging and replugging the USB/SD-card.")
+        print_question("If you chose the image option or are seeing this message the second time, create an issue on "
+                       "GitHub/Discord/Revolt")
+        sys.exit(1)
     bash(f"parted -s -a optimal {mnt_point} unit mib mkpart Kernel 1 65")  # kernel partition
     bash(f"parted -s -a optimal {mnt_point} unit mib mkpart Kernel 65 129")  # reserve kernel partition
     bash(f"parted -s -a optimal {mnt_point} unit mib mkpart Root 129 100%")  # rootfs partition
@@ -258,13 +212,6 @@ def partition_and_flash_kernel(mnt_point: str, write_usb: bool, distro_name: str
 def extract_rootfs(distro_name: str, distro_version: str) -> None:
     print_status("Extracting rootfs")
     match distro_name:
-        case "debian":
-            print_status("Debootstraping Debian into /mnt/depthboot")
-            # debootstrapping directly to /mnt/depthboot
-            debian_result = bash(f"debootstrap {distro_version} /mnt/depthboot https://deb.debian.org/debian/")
-            if debian_result.__contains__("Couldn't download packages:"):
-                print_error("Debian Debootstrap failed, check your internet connection or try again later")
-                exit(1)
         case "arch":
             print_status("Extracting arch rootfs")
             mkdir("/tmp/depthboot-build/arch-rootfs")
@@ -277,24 +224,8 @@ def extract_rootfs(distro_name: str, distro_version: str) -> None:
 
 
 # Configure distro agnostic options
-def post_extract(build_options, kernel_type: str, kernel_version: str, dev_release: bool) -> None:
+def post_extract(build_options) -> None:
     print_status("Applying distro agnostic configuration")
-
-    # Extract modules
-    print_status("Extracting kernel modules")
-    rmdir("/mnt/depthboot/lib/modules")  # remove any preinstalled modules
-    mkdir("/mnt/depthboot/lib/modules")
-    extract_file("/tmp/depthboot-build/modules.tar.xz", "/mnt/depthboot/lib/modules/")
-
-    # Extract kernel headers
-    print_status("Extracting kernel headers")
-    dir_kernel_version = bash("ls /mnt/depthboot/lib/modules/").strip()  # get modules dir name
-    rmdir(f"/mnt/depthboot/usr/src/linux-headers-{dir_kernel_version}", keep_dir=False)  # remove old headers
-    mkdir(f"/mnt/depthboot/usr/src/linux-headers-{dir_kernel_version}", create_parents=True)
-    extract_file("/tmp/depthboot-build/headers.tar.xz", f"/mnt/depthboot/usr/src/linux-headers-{dir_kernel_version}")
-    # use chroot for correct symlink
-    chroot(f"ln -s /usr/src/linux-headers-{dir_kernel_version}/ /lib/modules/{dir_kernel_version}/build")
-
     # Create a temporary resolv.conf for internet inside the chroot
     mkdir("/mnt/depthboot/run/systemd/resolve", create_parents=True)  # dir doesnt exist coz systemd didnt run
     open("/mnt/depthboot/run/systemd/resolve/stub-resolv.conf", "w").close()  # create empty file for mount
@@ -306,9 +237,6 @@ def post_extract(build_options, kernel_type: str, kernel_version: str, dev_relea
     # create depthboot settings file for postinstall scripts to read
     with open("configs/eupnea.json", "r") as settings_file:
         settings = json.load(settings_file)
-    settings["kernel_type"] = kernel_type
-    settings["kernel_version"] = kernel_version
-    settings["kernel_dev"] = dev_release
     settings["distro_name"] = build_options["distro_name"]
     settings["distro_version"] = build_options["distro_version"]
     settings["de_name"] = build_options["de_name"]
@@ -329,16 +257,14 @@ def post_extract(build_options, kernel_type: str, kernel_version: str, dev_relea
     cpfile("configs/hwdb/61-sensor.hwdb", "/mnt/depthboot/etc/udev/hwdb.d/61-sensor.hwdb")
     chroot("systemd-hwdb update")
 
+    print_status("Cleaning /boot")
+    rmdir("/mnt/depthboot/boot")  # clean stock kernels from /boot
+
     if build_options["distro_name"] == "fedora":
         print_status("Enabling resolved.conf systemd service")
         # systemd-resolved.service needed to create /etc/resolv.conf link. Not enabled by default on fedora
         # on other distros networkmanager takes care of this
         chroot("systemctl enable systemd-resolved")
-
-    print_status("Enable modules autoloading")
-    # Enable loading modules needed for depthboot
-    # TODO: Remove for v1.2.0 release
-    cpfile("configs/eupnea-modules.conf", "/mnt/depthboot/etc/modules-load.d/eupnea-modules.conf")
 
     # Do not pre-setup gnome, as there is a nice gui first time setup on first boot
     # TODO: Change to gnome
@@ -349,7 +275,7 @@ def post_extract(build_options, kernel_type: str, kernel_version: str, dev_relea
         password = build_options["password"]  # quotes interfere with functions below
         chroot(f"echo '{username}:{password}' | chpasswd")
         match build_options["distro_name"]:
-            case "ubuntu" | "debian":
+            case "ubuntu":
                 chroot(f"usermod -aG sudo {username}")
             case "arch" | "fedora":
                 chroot(f"usermod -aG wheel {username}")
@@ -370,10 +296,6 @@ def post_config(de_name: str, distro_name) -> None:
         print_status("Backing up default keymap and setting Chromebook layout")
         cpfile("/mnt/depthboot/usr/share/X11/xkb/symbols/pc", "/mnt/depthboot/usr/share/X11/xkb/symbols/pc.default")
         cpfile("configs/xkb/xkb.chromebook", "/mnt/depthboot/usr/share/X11/xkb/symbols/pc")
-
-    # copy previously downloaded firmware
-    print_status("Copying google firmware")
-    cpdir("/tmp/depthboot-build/firmware", "/mnt/depthboot/lib/firmware")
 
     # Enable postinstall service
     print_status("Enabling postinstall service")
@@ -429,7 +351,7 @@ def chroot(command: str) -> str:
 
 
 # The main build script
-def start_build(verbose: bool, local_path, kernel_type: str, dev_release: bool, build_options, img_size: int = 10,
+def start_build(verbose: bool, local_path, dev_release: bool, build_options, img_size: int = 10,
                 no_download_progress: bool = False, no_shrink: bool = False) -> None:
     if no_download_progress:
         disable_download_progress()  # disable download progress bar for non-interactive shells
@@ -440,9 +362,8 @@ def start_build(verbose: bool, local_path, kernel_type: str, dev_release: bool, 
     prepare_host(build_options["distro_name"])
 
     if local_path is None:  # default
-        kernel_version = download_kernel(kernel_type, dev_release)
+        download_kernel(build_options["kernel_type"], dev_release)
         download_rootfs(build_options["distro_name"], build_options["distro_version"])
-        download_firmware()
     else:  # if local path is specified, copy files from it, instead of downloading from the internet
         print_status("Copying local files to /tmp/depthboot-build")
         # clean local path string
@@ -452,27 +373,14 @@ def start_build(verbose: bool, local_path, kernel_type: str, dev_release: bool, 
         for file in kernel_files:
             try:
                 cpfile(f"{local_path_posix}{file}", f"/tmp/depthboot-build/{file}")
-                kernel_version = "unknown"
             except FileNotFoundError:
                 print_error(f"File {file} not found in {local_path}, attempting to download")
-                kernel_version = download_kernel(kernel_type, dev_release, [file])
-
-        # copy distro agnostic files
-        dirs = {
-            "firmware": download_firmware,
-        }
-        for directory in dirs:
-            try:
-                cpdir(f"{local_path_posix}{directory}", f"/tmp/depthboot-build/{directory}")
-            except FileNotFoundError:
-                print_error(f"Directory {directory} not found in {local_path}, attempting to download")
-                dirs[directory]()
+                download_kernel(build_options["kernel_type"], dev_release, [file])
 
         # copy distro rootfs
         distro_rootfs = {
             # distro_name:[cp function type,filename]
             "ubuntu": [cpfile, "ubuntu-rootfs.tar.xz"],
-            "debian": [cpdir, "debian"],
             "arch": [cpfile, "arch-rootfs.tar.gz"],
             "fedora": [cpfile, "fedora-rootfs.tar.xz"],
             "pop-os": [cpfile, "pop-os.iso"]
@@ -494,28 +402,25 @@ def start_build(verbose: bool, local_path, kernel_type: str, dev_release: bool, 
         output_temp = prepare_img(build_options["distro_name"], img_size)
     else:
         output_temp = prepare_usb_sd(build_options["device"], build_options["distro_name"])
-    root_partuuid = output_temp[1]
     global img_mnt
     img_mnt = output_temp[0]
     # Extract rootfs and configure distro agnostic settings
     extract_rootfs(build_options["distro_name"], build_options["distro_version"])
-    post_extract(build_options, kernel_type, kernel_version, dev_release)
+    post_extract(build_options)
 
     match build_options["distro_name"]:
         case "ubuntu":
             import distro.ubuntu as distro
-        case "debian":
-            import distro.debian as distro
         case "arch":
             import distro.arch as distro
         case "fedora":
             import distro.fedora as distro
         case "pop-os":
-            import distro.popos as distro
+            import distro.pop_os as distro
         case _:
             print_error("DISTRO NAME NOT FOUND! Please create an issue")
-            exit(1)
-    distro.config(build_options["de_name"], build_options["distro_version"], verbose)
+            sys.exit(1)
+    distro.config(build_options["de_name"], build_options["distro_version"], verbose, build_options["kernel_type"])
 
     post_config(build_options["de_name"], build_options["distro_name"])
 

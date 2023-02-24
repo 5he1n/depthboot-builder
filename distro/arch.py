@@ -2,23 +2,9 @@ from functions import *
 from urllib.request import urlretrieve
 
 
-def config(de_name: str, distro_version: str, verbose: bool) -> None:
+def config(de_name: str, distro_version: str, verbose: bool, kernel_version: str) -> None:
     set_verbose(verbose)
     print_status("Configuring Arch")
-
-    # Bind-mount some directories for pacman like arch-chroot does
-    bash("mount --types proc /proc /mnt/depthboot/proc -o rw,nosuid,nodev,noexec,relatime")
-    # bash("mount --types sysfs /sys /mnt/depthboot/sys -o ro,nosuid,nodev,noexec,relatime")
-    # bash("mount --types efivarfs /sys/firmware/efi/efivars
-    # /mnt/depthboot/sys/firmware/efi/efivars -o rw,nosuid,nodev,noexec,relatime")
-    bash("mount --types devtmpfs /dev /mnt/depthboot/dev "
-         "-o rw,nosuid,relatime,size=16339804k,nr_inodes=4084951,mode=755,inode64")
-    bash("mount --types devpts /dev/pts /mnt/depthboot/dev/pts"
-         " -o rw,nosuid,noexec,relatime,gid=5,mode=620,ptmxmode=000")
-    bash("mount --types tmpfs /dev/shm /mnt/depthboot/dev/shm -o rw,nosuid,nodev,relatime,inode64")
-    bash("mount --types tmpfs /run /mnt/depthboot/run"
-         " -o rw,nosuid,nodev,noexec,relatime,size=3280692k,mode=755,inode64")
-    bash("mount --types tmpfs /tmp /mnt/depthboot/tmp -o rw,nosuid,nodev,inode64")
 
     # Uncomment worldwide arch mirror
     with open("/mnt/depthboot/etc/pacman.d/mirrorlist", "r") as read:
@@ -49,9 +35,16 @@ def config(de_name: str, distro_version: str, verbose: bool) -> None:
     chroot("pacman -Syyu --noconfirm")  # update the whole system
 
     print_status("Installing packages")
-    # Install basic utils + eupnea packages
-    chroot("pacman -S --noconfirm base base-devel nano networkmanager xkeyboard-config linux-firmware sudo bluez "
-           "bluez-utils eupnea-utils eupnea-system cgpt-vboot-utils")
+    # Install basic utils
+    chroot("pacman -S --noconfirm --needed base base-devel nano networkmanager xkeyboard-config linux-firmware sudo bluez "
+           "bluez-utils python3 cgpt-vboot-utils zram-generator")
+    # install eupnea packages after installing python3
+    chroot("pacman -S --noconfirm eupnea-utils eupnea-system")
+    # Install kernel
+    if kernel_version == "mainline":
+        chroot("pacman -S --noconfirm eupnea-mainline-kernel")
+    elif kernel_version == "chromeos":
+        chroot("pacman -S --noconfirm eupnea-chromeos-kernel")
 
     print_status("Downloading and installing de, might take a while")
     match de_name:
@@ -112,6 +105,8 @@ def config(de_name: str, distro_version: str, verbose: bool) -> None:
     chroot("systemctl enable NetworkManager.service")
     # Enable bluetooth systemd service
     chroot("systemctl enable bluetooth")
+    # Add zram config
+    cpfile("configs/zram/zram-generator.conf", "/mnt/depthboot/etc/systemd/zram-generator.conf")
 
     # Configure sudo
     with open("/mnt/depthboot/etc/sudoers", "r") as conf:

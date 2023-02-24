@@ -1,7 +1,7 @@
 from functions import *
 
 
-def config(de_name: str, distro_version: str, verbose: bool) -> None:
+def config(de_name: str, distro_version: str, verbose: bool, kernel_version: str) -> None:
     set_verbose(verbose)
     print_status("Configuring Fedora")
 
@@ -9,15 +9,14 @@ def config(de_name: str, distro_version: str, verbose: bool) -> None:
     chroot(f"dnf install -y --releasever={distro_version} fedora-release")  # update repos list
     # Add eupnea repo
     chroot("dnf config-manager --add-repo https://eupnea-linux.github.io/rpm-repo/eupnea.repo")
-    # Add RPMFusion repos
-    chroot(f"dnf install -y https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-"
-           f"{distro_version}.noarch.rpm")
-    chroot(f"dnf install -y https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-"
-           f"{distro_version}.noarch.rpm")
     chroot("dnf update --refresh -y")  # update repos
-    chroot("dnf upgrade -y")  # upgrade the whole system
     # Install eupnea packages
     chroot("dnf install -y eupnea-system eupnea-utils")
+    # Install kernel
+    if kernel_version == "mainline":
+        chroot("dnf install -y eupnea-mainline-kernel")
+    elif kernel_version == "chromeos":
+        chroot("dnf install -y eupnea-chromeos-kernel")
     # Install core packages
     chroot("dnf group install -y 'Core'")
     # Install firmware packages
@@ -64,10 +63,8 @@ def config(de_name: str, distro_version: str, verbose: bool) -> None:
         chroot("systemctl set-default graphical.target")
     print_status("Desktop environment setup complete")
 
-    # TODO: Remove for v1.2.0 release
-    print_status("Adding fedora modules")
-    with open("/mnt/depthboot/etc/modules-load.d/eupnea-modules.conf", "a") as f:
-        f.write("\n# Fedora modules\nsunrpc\n")
+    # Add zram config
+    cpfile("configs/zram/zram-generator.conf", "/mnt/depthboot/etc/systemd/zram-generator.conf")
 
     print_status("Fedora setup complete")
 

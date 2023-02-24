@@ -1,12 +1,12 @@
-from getpass import getpass
-from functions import *
-
-# I/A selection imports
-import tty
+import atexit
+import json
 import sys
 import termios
-import atexit
+import tty
+from getpass import getpass
 from itertools import zip_longest
+
+from functions import *
 
 
 def get_user_input(skip_device: bool = False) -> dict:
@@ -25,34 +25,25 @@ def get_user_input(skip_device: bool = False) -> dict:
                  "The script will now ask a few questions.\n"
                  "You can Press Ctrl+C at any time to cancel the script.")
     input("Press Enter to continue...")
+
+    # open os_sizes.json
+    with open("os_sizes.json", "r") as f:
+        os_sizes = json.load(f)
+
     while True:
         distro_name = ia_selection("Which Linux distribution (flavor) would you like to use?",
-                                   options=["Pop!_OS", "Ubuntu", "Fedora", "Arch", "Debian"],
-                                   flags=["(recommended)"])
+                                   options=["Pop!_OS", "Ubuntu", "Fedora", "Arch"],
+                                   flags=[f"~{os_sizes['pop-os_22.04']['average']}GB (recommended)",
+                                          f"~{os_sizes['ubuntu_average']}GB", f"~{os_sizes['fedora_37']['average']}GB",
+                                          f"~{os_sizes['arch_latest']['average']}GB"])
         match distro_name:
             case "Ubuntu":
                 output_dict["distro_name"] = "ubuntu"
                 output_dict["distro_version"] = ia_selection("Which Ubuntu version would you like to use?",
-                                                             options=["22.04", "22.10"], flags=["(LTS)", "(latest)"])
+                                                             options=["22.04", "22.10"], flags=[
+                        f"~{os_sizes['ubuntu_22.04']['average']}GB (LTS version)",
+                        f"~{os_sizes['ubuntu_22.10']['average']}GB (latest)"])
                 break
-            case "Debian":
-                output_dict["distro_name"] = "debian"
-                output_dict["distro_version"] = ia_selection("Which debian branch would you like to use?",
-                                                             options=["testing", "stable"],
-                                                             flags=["(recommended)", "(not recommended)"])
-                if output_dict["distro_version"] != "stable":
-                    break
-                user_selection = ia_selection(
-                    "Warning: audio and some postinstall scripts are not supported on debian stable by default.",
-                    options=["Use testing instead", "Choose another distro", "Continue with stable"])
-                match user_selection:
-                    case "Continue with stable":
-                        break
-                    case "Use testing instead":
-                        output_dict["distro_version"] = "testing"
-                        break
-                    case "Choose another distro":
-                        continue  # return to distro selection
             case "Arch":
                 output_dict["distro_name"] = "arch"
                 output_dict["distro_version"] = "latest"
@@ -61,7 +52,10 @@ def get_user_input(skip_device: bool = False) -> dict:
                 output_dict["distro_name"] = "fedora"
                 output_dict["distro_version"] = ia_selection("Which Fedora version would you like to use?",
                                                              options=["37", "38"],
-                                                             flags=["(stable, recommended)", "(beta, unrecommended)"])
+                                                             flags=[f"~{os_sizes['fedora_37']['average']}GB "
+                                                                    f"(stable, recommended)",
+                                                                    f"~{os_sizes['fedora_38']['average']}GB"
+                                                                    " (beta, unrecommended)"])
                 break
             case "Pop!_OS":  # default
                 output_dict["distro_name"] = "pop-os"
@@ -69,22 +63,33 @@ def get_user_input(skip_device: bool = False) -> dict:
                 break
     print(f"{output_dict['distro_name']} {output_dict['distro_version']} selected")
 
-    if output_dict["distro_name"] != "pop-os":
-        de_list = ["Gnome", "KDE", "Xfce", "LXQt", "cli"]
-        flags_list = ["(recommended)", "(recommended)", "(recommended for weak devices)",
-                      "(recommended for weak devices)", "(no desktop environment)"]
+    temp_distro_name = f'{output_dict["distro_name"]}_{output_dict["distro_version"]}'
 
+    if output_dict["distro_name"] != "pop-os":
+        de_list = ["Gnome", "KDE", "Xfce", "LXQt"]
+        flags_list = [f"(recommended) ~{os_sizes[temp_distro_name]['gnome']}GB",
+                      f"(recommended) ~{os_sizes[temp_distro_name]['kde']}GB",
+                      f"(recommended for weak devices) ~{os_sizes[temp_distro_name]['xfce']}GB",
+                      f"(recommended for weak devices) ~{os_sizes[temp_distro_name]['lxqt']}GB"]
         match output_dict["distro_name"]:
             case "ubuntu":
                 if output_dict["distro_version"] == "22.04":
                     de_list.append("deepin")
+                    flags_list.append(f"~{os_sizes[temp_distro_name]['deepin']}GB")
                 de_list.append("budgie")
-            case "debian":
-                de_list.append("budgie")
+                flags_list.append(f"~{os_sizes[temp_distro_name]['budgie']}GB")
             case "arch":
-                de_list.append("deepin")
+                # Deepin is currently broken on arch
+                # de_list.extend(["deepin", "budgie"])
+                de_list.append("budgie")
+                flags_list.append(f"~{os_sizes[temp_distro_name]['budgie']}GB")
             case "fedora":
                 de_list.extend(["deepin", "budgie"])
+                flags_list.append(f"~{os_sizes[temp_distro_name]['deepin']}GB")
+                flags_list.append(f"~{os_sizes[temp_distro_name]['budgie']}GB")
+
+        de_list.append("cli")  # add at the end for better ux
+        flags_list.append(f"~{os_sizes[temp_distro_name]['cli']}GB")
 
         while True:
             desktop_env = ia_selection("Which desktop environment (Desktop GUI) would you like to use?",
@@ -93,8 +98,9 @@ def get_user_input(skip_device: bool = False) -> dict:
             if desktop_env == "cli":
                 print_warning("Warning: No desktop environment will be installed!")
                 user_selection = ia_selection("Are you sure you want to continue?", options=["No", "Yes"], )
-                if user_selection == "Yes":
+                if user_selection == "No":
                     print_status("No desktop will be installed.")
+                    continue
 
             output_dict["de_name"] = desktop_env.lower()
             break
@@ -142,12 +148,17 @@ def get_user_input(skip_device: bool = False) -> dict:
 
     while True:
         kernel_type = ia_selection("Which kernel type would you like to use? Usually there is no need to change this",
-                                   options=["stable", "experimental", "mainline"],
-                                   flags=["(default, recommended)", '', "(recommended)"])
+                                   options=["Mainline", "ChromeOS"],
+                                   flags=["(default, recommended)", "(recommended for some devices)"])
 
         output_dict["kernel_type"] = kernel_type.lower()
         break
     print(f"{kernel_type} kernel selected")
+
+    # Check if usb reading is possible
+    if not path_exists("/sys/dev/block"):
+        print_warning("Couldn't read usb devices. Building image file.")
+        skip_device = True
 
     if not skip_device:
         print_status("Available devices: ")

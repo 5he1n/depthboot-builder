@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # This script will later become the gui. For now, it's a simple wrapper for the build script.
 
-import sys
-import os
 import argparse
 import atexit
+import os
+import sys
 
 from functions import *
+
+global user_cancelled
+user_cancelled = False
 
 
 # parse arguments from the cli. Only for testing/advanced use. All other parameters are handled by cli_input.py
@@ -20,6 +23,8 @@ def process_args():
                         help="Print more output")
     parser.add_argument("--no-shrink", action="store_true", dest="no_shrink", default=False,
                         help="Do not shrink image")
+    parser.add_argument("--skip-size-check", action="store_true", dest="skip_size_check", default=False,
+                        help="Do not check available disk space")
     parser.add_argument("--image-size", "-i", dest="image_size", type=int, nargs=1, default=[10],
                         help="Override image size(default: 10GB)")
     parser.add_argument("--dev", action="store_true", dest="dev_build", default=False,
@@ -27,15 +32,49 @@ def process_args():
     return parser.parse_args()
 
 
+class ExitHooks(object):
+    def __init__(self):
+        self.exit_code = None
+
+    def hook(self):
+        self._orig_exit = sys.exit
+        self._orig_excepthook = sys.excepthook
+        self._orig_exc_handler = self.exc_handler
+        sys.exit = self.exit
+        sys.excepthook = self.exc_handler
+
+    def exit(self, code=0):
+        self.exit_code = code
+        self._orig_exit(code)
+
+    def exc_handler(self, exc_type, exc, *args):
+        if exc_type == KeyboardInterrupt:
+            global user_cancelled
+            user_cancelled = True
+        else:
+            sys.__excepthook__(exc_type, exc, *args)
+
+
 def exit_handler():
-    print_question('Run "./main.py" to start again\n'
-                   'Run "./main.py -v" for more output in the next run\n'
-                   'Run "./main.py --help" for more options')
+    if user_cancelled:
+        print_error("User cancelled, exiting")
+        return
+    if hooks.exit_code not in [0, 1]:  # ignore normal exit codes
+        print_error("Script exited unexpectedly, please open an issue on GitHub/Discord/Revolt")
+        print_question('Run "./main.py -v" to restart with more verbose output\n'
+                       'Run "./main.py --help" for more options')
 
 
 if __name__ == "__main__":
-    args = process_args()
+    # override sys.exit to catch exit codes
+    hooks = ExitHooks()
+    hooks.hook()
     atexit.register(exit_handler)
+
+    args = process_args()
+    if args.dev_build:
+        print_error("Dev builds are not supported currently")
+        sys.exit(1)
 
     # Restart script as root
     if os.geteuid() != 0:
@@ -44,28 +83,39 @@ if __name__ == "__main__":
 
     # check script dependencies are already installed with which
     try:
-        bash("which pv parted cgpt futility")
+        bash("which pv xz parted cgpt futility")
         print_status("Dependencies already installed, skipping")
     except subprocess.CalledProcessError:
         print_status("Installing dependencies")
-        if path_exists("/usr/bin/apt"):  # Ubuntu + debian
-            bash("apt-get update -y")
-            bash("apt-get install -y pv parted cgpt vboot-kernel-utils")
-        elif path_exists("/usr/bin/pacman"):  # Arch
-            bash("pacman -Syyu --noconfirm")  # sync and update system
+        with open("/etc/os-release", "r") as os:
+            distro = os.read()
+        if distro.lower().__contains__(
+                "arch"):  # might accidentally catch architecture stuff, but needed to catch arch derivatives
+            bash("pacman -Sy")  # sync repos
             # Download prepackaged cgpt + vboot from arch-repo releases as its not available in the official repos
-            urlretrieve(
-                "https://github.com/eupnea-linux/arch-repo/releases/latest/download/cgpt-vboot-utils.pkg.tar.gz",
-                filename="/tmp/cgpt-vboot-utils.pkg.tar.gz")
-            # Install package
+            # Makepkg is too much of a hassle to use here as it requires a non-root user
+            urlretrieve("https://github.com/eupnea-linux/arch-repo/releases/latest/download/cgpt-vboot"
+                        "-utils.pkg.tar.gz", filename="/tmp/cgpt-vboot-utils.pkg.tar.gz")
+            # Install downloaded package
             bash("pacman --noconfirm -U /tmp/cgpt-vboot-utils.pkg.tar.gz")
             # Install other dependencies
-            bash("pacman --noconfirm -S pv parted")
-        elif path_exists("/usr/bin/dnf"):  # Fedora
-            bash("dnf update -y")
-            bash("dnf install vboot-utils parted pv --assumeyes")  # cgpt is included in vboot-utils on fedora
-        elif path_exists("/usr/bin/zypper"):  # openSUSE
-            bash("zypper --non-interactive install vboot parted pv")
+            bash("pacman --noconfirm -S pv xz parted")
+        elif distro.lower().__contains__("void"):
+            bash("xbps-install -y --sync")
+            bash("xbps-install -y pv xz parted cgpt vboot-utils")
+        elif distro.lower().__contains__("ubuntu") or distro.lower().__contains__("debian"):
+            bash("apt-get update -y")  # sync repos
+            bash("apt-get install -y pv xz-utils parted cgpt vboot-kernel-utils")
+        elif distro.lower().__contains__("suse"):
+            bash("zypper --non-interactive refresh")  # sync repos
+            bash("zypper --non-interactive install vboot parted pv xz")  # cgpt is included in vboot-utils on fedora
+        elif distro.lower().__contains__("fedora"):
+            bash("dnf update -y")  # sync repos
+            bash("dnf install -y vboot-utils parted pv xz")  # cgpt is included in vboot-utils on fedora
+        else:
+            print_warning("Script dependencies not found, please install the following packages with your package "
+                          "manager: which pv xz parted cgpt futility")
+            sys.exit(1)
 
     # Check python version
     if sys.version_info < (3, 10):  # python 3.10 or higher is required
@@ -102,11 +152,9 @@ if __name__ == "__main__":
                 bash("apt-get update -y")  # update cache back to stable channel
 
                 print_header('Please restart the script with: "./main.py"')
-            else:
-                print_error("Please run the script with python 3.10 or higher")
-        else:
-            print_error("Please run the script with python 3.10 or higher")
-        exit(1)
+                sys.exit(0)
+        print_error("Please run the script with python 3.10 or higher")
+        sys.exit(1)
     # import other scripts after python version check is successful
     import build
     import cli_input
@@ -126,7 +174,7 @@ if __name__ == "__main__":
             print_error("Failed to prepare Crostini")
             print_error("Please run the Crostini specific instructions before running this script")
             print("https://eupnea-linux.github.io/main.html#/extra-pages/crostini")
-            exit(1)
+            sys.exit(1)
         open("/tmp/.crostini-fixed", "a").close()
 
     # parse arguments
@@ -148,6 +196,20 @@ if __name__ == "__main__":
     else:
         user_input = cli_input.get_user_input()  # get normal user input
 
-    build.start_build(verbose=args.verbose, local_path=args.local_path, kernel_type=user_input["kernel_type"],
-                      dev_release=args.dev_build, build_options=user_input, no_shrink=args.no_shrink,
-                      img_size=args.image_size[0])
+    # Check if there is enough space in /tmp
+    avail_space = float(bash("df -h --output=avail /tmp").replace(",", ".").split(" ")[-1][:-1])  # read tmp size in GB
+
+    if user_input["device"] == "image" and avail_space < 13.0 and not args.skip_size_check:
+        print_error("Not enough space in /tmp to build image. At least 13GB is required")
+        user_answer = input("\033[92m" + "Attempt to increase size of /tmp? (Y/n)\n" + "\033[0m").lower()
+        if user_answer in ["y", ""]:
+            print_status("Increasing size of /tmp")
+            bash("mount -o remount,size=13G /tmp")
+            print_status("Size of /tmp increased")
+        else:
+            print_error("Please free up space in /tmp or use --skip-size-check to ignore this check")
+            sys.exit(1)
+
+    build.start_build(verbose=args.verbose, local_path=args.local_path, dev_release=args.dev_build,
+                      build_options=user_input, no_shrink=args.no_shrink, img_size=args.image_size[0])
+    sys.exit(0)
